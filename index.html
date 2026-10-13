@@ -87,13 +87,18 @@
 
     <div id="ui-layer">
         <!-- Top HUD -->
-        <div class="flex justify-between items-start p-4 pointer-events-auto">
-            <div class="bg-white/90 backdrop-blur rounded-2xl p-3 shadow-lg border-2 border-blue-200">
-                <h1 class="text-xl font-bold text-blue-600">English 3D Quest</h1>
-                <div class="flex items-center mt-1 space-x-2">
-                    <span class="text-2xl">🪙</span>
-                    <span id="coin-count" class="text-2xl font-black text-yellow-500">0</span>
+        <div class="flex justify-between items-start p-2 pointer-events-auto">
+            <div class="flex flex-col gap-2">
+                <div class="bg-white/80 backdrop-blur rounded-xl p-2 shadow-lg border-2 border-blue-200">
+                    <h1 class="text-sm md:text-base font-bold text-blue-600">English 3D Quest</h1>
+                    <div class="flex items-center mt-1 space-x-2">
+                        <span class="text-xl">🪙</span>
+                        <span id="coin-count" class="text-xl font-black text-yellow-500">0</span>
+                    </div>
                 </div>
+                <button class="btn-game bg-gray-500 hover:bg-gray-600 text-white px-3 py-1.5 rounded-xl font-bold text-sm shadow-md transition-colors" onclick="app.skipRound()">
+                    スキップ ⏭️
+                </button>
             </div>
             
             <div class="flex flex-col space-y-2">
@@ -434,6 +439,8 @@
                 
                 // Joystick Data
                 this.joystickVector = { x: 0, y: 0 };
+                
+                this.movementEnabled = true;
 
                 this.setupControls();
                 this.setupJoystick();
@@ -929,22 +936,24 @@
                 this.velocity.x -= this.velocity.x * 10.0 * delta;
                 this.velocity.z -= this.velocity.z * 10.0 * delta;
 
-                // Keyboard input
-                this.direction.z = Number( this.moveState.forward ) - Number( this.moveState.backward );
-                this.direction.x = Number( this.moveState.right ) - Number( this.moveState.left );
-                this.direction.normalize(); 
-                
-                // Combine with Joystick input
-                let moveX = this.direction.x;
-                let moveZ = this.direction.z;
-                
-                if (this.joystickVector.x !== 0 || this.joystickVector.y !== 0) {
-                    moveX += this.joystickVector.x;
-                    moveZ += this.joystickVector.y;
-                }
+                if (this.movementEnabled) {
+                    // Keyboard input
+                    this.direction.z = Number( this.moveState.forward ) - Number( this.moveState.backward );
+                    this.direction.x = Number( this.moveState.right ) - Number( this.moveState.left );
+                    this.direction.normalize(); 
+                    
+                    // Combine with Joystick input
+                    let moveX = this.direction.x;
+                    let moveZ = this.direction.z;
+                    
+                    if (this.joystickVector.x !== 0 || this.joystickVector.y !== 0) {
+                        moveX += this.joystickVector.x;
+                        moveZ += this.joystickVector.y;
+                    }
 
-                if ( this.moveState.forward || this.moveState.backward || this.joystickVector.y !== 0) this.velocity.z -= moveZ * 40.0 * delta;
-                if ( this.moveState.left || this.moveState.right || this.joystickVector.x !== 0) this.velocity.x -= moveX * 40.0 * delta;
+                    if ( this.moveState.forward || this.moveState.backward || this.joystickVector.y !== 0) this.velocity.z -= moveZ * 40.0 * delta;
+                    if ( this.moveState.left || this.moveState.right || this.joystickVector.x !== 0) this.velocity.x -= moveX * 40.0 * delta;
+                }
 
                 // Apply velocity to camera position taking rotation into account
                 const camRot = this.camera.rotation.y;
@@ -981,6 +990,7 @@
                 this.fails = 0;
                 this.currentQuestion = null; // { mode: 'ask'|'answer', item, prep, place, targetSentence }
                 this.isListening = false;
+                this.timeoutTimer = null;
                 
                 // Speech setup
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1043,6 +1053,9 @@
             }
 
             generateRound() {
+                if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
+                this.scene3d.movementEnabled = true;
+
                 this.fails = 0;
                 document.getElementById('fail-counter').classList.add('hidden');
                 document.querySelectorAll('.fail-dot').forEach(el => el.classList.replace('bg-red-500', 'bg-gray-300'));
@@ -1094,15 +1107,46 @@
                 
                 // Update UI
                 document.getElementById('instruction-text').innerText = instructionJa;
-                document.getElementById('target-hint').innerText = hintText;
+                
+                const hintEl = document.getElementById('target-hint');
+                hintEl.innerText = hintText;
+                hintEl.classList.remove('text-red-500', 'text-lg', 'font-black');
+                hintEl.classList.add('text-blue-600', 'text-sm');
 
                 // Update 3D
                 this.scene3d.placeItem(item, prep, place);
                 
                 console.log("Target:", targetEn); // Debug
+                
+                // Start 15s timer for timeout
+                this.timeoutTimer = setTimeout(() => {
+                    this.handleTimeout();
+                }, 15000);
+            }
+
+            handleTimeout() {
+                this.scene3d.movementEnabled = false;
+                document.getElementById('instruction-text').innerText = "時間切れ！答えを言ってね！";
+                
+                const hintEl = document.getElementById('target-hint');
+                hintEl.innerText = `答え: ${this.currentQuestion.targetSentence}`;
+                hintEl.classList.remove('text-blue-600', 'text-sm');
+                hintEl.classList.add('text-red-500', 'text-lg', 'font-black');
+                
+                playSound('wrong');
+            }
+
+            skipRound() {
+                if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
+                this.nextRound();
             }
 
             toggleListening() {
+                if (this.timeoutTimer) {
+                    clearTimeout(this.timeoutTimer);
+                    this.timeoutTimer = null;
+                }
+
                 if(!this.recognition) return;
                 if(this.isListening) {
                     this.recognition.stop();
