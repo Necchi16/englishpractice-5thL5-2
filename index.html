@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D English Preposition Quest!</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Nipple.js for virtual joystick -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0fdfa; font-family: 'Inter', 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif; touch-action: none; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
+        .pointer-events-auto { pointer-events: auto; }
+        
+        /* Custom Animations & Styles */
+        .btn-game { transition: all 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1), 0 6px 0 var(--btn-shadow); }
+        .btn-game:active { transform: translateY(4px); box-shadow: 0 2px 3px rgba(0,0,0,0.1), 0 2px 0 var(--btn-shadow); }
+        .btn-blue { background-color: #3b82f6; color: white; --btn-shadow: #2563eb; }
+        .btn-green { background-color: #22c55e; color: white; --btn-shadow: #16a34a; }
+        .btn-yellow { background-color: #eab308; color: white; --btn-shadow: #ca8a04; }
+        .btn-red { background-color: #ef4444; color: white; --btn-shadow: #dc2626; }
+        .btn-purple { background: linear-gradient(135deg, #a855f7, #ec4899); color: white; --btn-shadow: #9333ea; }
+        
+        .modal-bg { background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); }
+        .gacha-spin { animation: spin 0.5s ease-in-out infinite; }
+        @keyframes spin { 0% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.2) rotate(180deg); } 100% { transform: scale(1) rotate(360deg); } }
+        .pop-in { animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes popIn { 0% { opacity: 0; transform: scale(0.5); } 100% { opacity: 1; transform: scale(1); } }
+        
+        .mic-recording { animation: pulse-red 1.5s infinite; }
+        @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+
+        /* Hide scrollbar for character collection */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Joystick area */
+        #joystick-zone {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 150px;
+            height: 150px;
+            z-index: 20;
+            pointer-events: auto;
+            /* Hide on desktop by default, handle in JS */
+        }
+        
+        /* Crosshair */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border: 2px solid rgba(0, 0, 0, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        /* Instructions overlay */
+        #controls-hint {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.5);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            pointer-events: none;
+            transition: opacity 1s;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="crosshair"></div>
+
+    <div id="ui-layer">
+        <!-- Top HUD -->
+        <div class="flex justify-between items-start p-4 pointer-events-auto">
+            <div class="bg-white/90 backdrop-blur rounded-2xl p-3 shadow-lg border-2 border-blue-200">
+                <h1 class="text-xl font-bold text-blue-600">English 3D Quest</h1>
+                <div class="flex items-center mt-1 space-x-2">
+                    <span class="text-2xl">🪙</span>
+                    <span id="coin-count" class="text-2xl font-black text-yellow-500">0</span>
+                </div>
+            </div>
+            
+            <div class="flex flex-col space-y-2">
+                <button id="btn-gacha" class="btn-game btn-purple px-4 py-3 rounded-xl font-bold text-lg opacity-50 cursor-not-allowed hidden" onclick="app.openGacha()">
+                    ガチャを回す (5🪙)
+                </button>
+                <button class="btn-game btn-blue px-4 py-2 rounded-xl font-bold" onclick="app.openCollection()">
+                    図鑑を見る 📖
+                </button>
+            </div>
+        </div>
+
+        <div id="controls-hint" class="font-bold">
+            W/A/S/Dキー または 画面左下スワイプ で移動<br>
+            マウスドラッグ または 画面スワイプ で視点変更
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="p-2 w-full max-w-lg mx-auto pointer-events-auto mt-auto mb-2">
+            <!-- Game Info Panel -->
+            <div class="bg-white/80 backdrop-blur-md rounded-2xl p-3 shadow-2xl border-2 border-blue-300 text-center relative overflow-hidden">
+                <div id="round-indicator" class="absolute top-1 right-3 text-sm font-bold text-gray-500">Round 1</div>
+                <div id="room-name" class="absolute top-1 left-3 text-sm font-bold text-blue-600">Living Room</div>
+                
+                <h2 id="instruction-text" class="text-xl font-bold text-gray-800 mb-1 mt-5">ローディング中...</h2>
+                <p id="target-hint" class="text-sm text-blue-600 font-semibold mb-1 h-5"></p>
+
+                <!-- Voice Input Area -->
+                <div id="voice-area" class="flex flex-col items-center">
+                    <button id="btn-mic" class="btn-game btn-red rounded-full w-14 h-14 flex items-center justify-center text-2xl mb-2" onclick="app.toggleListening()">
+                        🎤
+                    </button>
+                    <p id="transcript-text" class="text-xs text-gray-600 h-4 font-bold">マイクボタンを押して英語を話してね</p>
+                    
+                    <div id="fail-counter" class="flex space-x-1 mt-1 hidden">
+                        <span class="w-2 h-2 rounded-full bg-gray-300 fail-dot"></span>
+                        <span class="w-2 h-2 rounded-full bg-gray-300 fail-dot"></span>
+                        <span class="w-2 h-2 rounded-full bg-gray-300 fail-dot"></span>
+                    </div>
+                </div>
+
+                <!-- MCQ Area (Hidden by default) -->
+                <div id="mcq-area" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    <!-- Buttons generated dynamically -->
+                </div>
+
+                <!-- Next Button (Hidden by default) -->
+                <button id="btn-next" class="hidden btn-game btn-green w-full py-2 rounded-xl font-bold text-lg mt-2" onclick="app.nextRound()">
+                    次へすすむ ➡️
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="joystick-zone"></div>
+
+    <!-- Gacha Modal -->
+    <div id="modal-gacha" class="fixed inset-0 modal-bg z-50 hidden flex flex-col items-center justify-center pointer-events-auto">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-full mx-4 text-center transform scale-95 transition-transform duration-300" id="gacha-content">
+            <h2 class="text-3xl font-black text-purple-600 mb-6">ガチャタイム！</h2>
+            <div id="gacha-animation" class="text-8xl mb-6 hidden">✨</div>
+            <div id="gacha-result" class="hidden flex-col items-center pop-in">
+                <div id="gacha-emoji" class="text-9xl drop-shadow-xl mb-4">🧚</div>
+                <div class="inline-block px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-bold mb-2 border border-yellow-300" id="gacha-rarity">レア</div>
+                <h3 id="gacha-name" class="text-2xl font-bold text-gray-800">風の妖精</h3>
+            </div>
+            <div class="mt-8">
+                <button id="btn-do-gacha" class="btn-game btn-purple w-full py-3 rounded-xl font-bold text-xl mb-3" onclick="app.playGacha()">
+                    5コインで回す！
+                </button>
+                <button class="text-gray-500 font-bold underline p-2" onclick="app.closeGacha()">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Collection Modal -->
+    <div id="modal-collection" class="fixed inset-0 modal-bg z-50 hidden flex flex-col items-center justify-center pointer-events-auto">
+        <div class="bg-white rounded-3xl p-6 max-w-4xl w-full h-[85vh] mx-4 flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-black text-blue-600">キャラクター図鑑 (<span id="collection-count">0</span>/50)</h2>
+                <button class="bg-gray-200 hover:bg-gray-300 rounded-full w-10 h-10 font-bold text-xl flex justify-center items-center" onclick="app.closeCollection()">×</button>
+            </div>
+            <div id="collection-grid" class="flex-1 overflow-y-auto no-scrollbar grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 p-2">
+                <!-- Collection items generated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback Message Overlay -->
+    <div id="feedback-message" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 hidden pointer-events-none">
+        <div class="text-6xl md:text-8xl font-black text-center pop-in drop-shadow-2xl" style="-webkit-text-stroke: 3px white;" id="feedback-text">
+            Excellent!
+        </div>
+    </div>
+
+    <script>
+        // 50 Fantasy Characters List
+        const CHARACTERS = [
+            { id: 1, name: "スライム", emoji: "💧", rarity: "Common" },
+            { id: 2, name: "レッドスライム", emoji: "🔴", rarity: "Common" },
+            { id: 3, name: "ゴブリン", emoji: "👺", rarity: "Common" },
+            { id: 4, name: "コボルト", emoji: "🐶", rarity: "Common" },
+            { id: 5, name: "きのこおばけ", emoji: "🍄", rarity: "Common" },
+            { id: 6, name: "草の精", emoji: "🌱", rarity: "Common" },
+            { id: 7, name: "火の玉", emoji: "🔥", rarity: "Common" },
+            { id: 8, name: "ドクロ兵", emoji: "💀", rarity: "Common" },
+            { id: 9, name: "マッドゴースト", emoji: "👻", rarity: "Common" },
+            { id: 10, name: "岩男", emoji: "🪨", rarity: "Common" },
+            { id: 11, name: "見習い魔法使い", emoji: "🧙", rarity: "Common" },
+            { id: 12, name: "旅の剣士", emoji: "🗡️", rarity: "Common" },
+            { id: 13, name: "小さなクモ", emoji: "🕷️", rarity: "Common" },
+            { id: 14, name: "コウモリ", emoji: "🦇", rarity: "Common" },
+            { id: 15, name: "ネズミ闘士", emoji: "🐭", rarity: "Common" },
+            { id: 16, name: "かぼちゃおばけ", emoji: "🎃", rarity: "Common" },
+            { id: 17, name: "水の精霊", emoji: "🌊", rarity: "Rare" },
+            { id: 18, name: "炎の戦士", emoji: "🧑‍🚒", rarity: "Rare" },
+            { id: 19, name: "風の妖精", emoji: "🧚", rarity: "Rare" },
+            { id: 20, name: "大グモ", emoji: "🕸️", rarity: "Rare" },
+            { id: 21, name: "エルフの弓使い", emoji: "🧝", rarity: "Rare" },
+            { id: 22, name: "ドワーフの戦士", emoji: "🧔‍♂️", rarity: "Rare" },
+            { id: 23, name: "人魚", emoji: "🧜‍♀️", rarity: "Rare" },
+            { id: 24, name: "ケンタウロス", emoji: "🐎", rarity: "Rare" },
+            { id: 25, name: "ガーゴイル", emoji: "🗿", rarity: "Rare" },
+            { id: 26, name: "ミイラ男", emoji: "🧻", rarity: "Rare" },
+            { id: 27, name: "雪女", emoji: "⛄", rarity: "Rare" },
+            { id: 28, name: "サムライ", emoji: "🥷", rarity: "Rare" },
+            { id: 29, name: "ゴーレム", emoji: "🧱", rarity: "Rare" },
+            { id: 30, name: "黒騎士", emoji: "🤺", rarity: "Rare" },
+            { id: 31, name: "吸血鬼", emoji: "🧛", rarity: "Rare" },
+            { id: 32, name: "ゾンビキング", emoji: "🧟", rarity: "Rare" },
+            { id: 33, name: "ペガサス", emoji: "🦄", rarity: "Epic" },
+            { id: 34, name: "ユニコーン", emoji: "🎠", rarity: "Epic" },
+            { id: 35, name: "グリフォン", emoji: "🦅", rarity: "Epic" },
+            { id: 36, name: "大魔法使い", emoji: "🧙‍♂️", rarity: "Epic" },
+            { id: 37, name: "精霊王", emoji: "👑", rarity: "Epic" },
+            { id: 38, name: "魔王の側近", emoji: "👁️", rarity: "Epic" },
+            { id: 39, name: "クリスタルゴーレム", emoji: "💎", rarity: "Epic" },
+            { id: 40, name: "キマイラ", emoji: "🦁", rarity: "Epic" },
+            { id: 41, name: "ワイバーン", emoji: "🦎", rarity: "Epic" },
+            { id: 42, name: "フェニックス", emoji: "🕊️", rarity: "Epic" },
+            { id: 43, name: "ブルードラゴン", emoji: "🐉", rarity: "Epic" },
+            { id: 44, name: "レッドドラゴン", emoji: "🦖", rarity: "Legendary" },
+            { id: 45, name: "光の勇者", emoji: "🌟", rarity: "Legendary" },
+            { id: 46, name: "闇の魔王", emoji: "👿", rarity: "Legendary" },
+            { id: 47, name: "黄金の龍", emoji: "✨", rarity: "Legendary" },
+            { id: 48, name: "伝説の女神", emoji: "🗽", rarity: "Legendary" },
+            { id: 49, name: "時空の覇者", emoji: "⏳", rarity: "Legendary" },
+            { id: 50, name: "宇宙の創造神", emoji: "🌌", rarity: "Legendary" }
+        ];
+
+        // Rarity styling mapping
+        const RARITY_COLORS = {
+            "Common": "bg-gray-100 text-gray-700 border-gray-300",
+            "Rare": "bg-blue-100 text-blue-700 border-blue-300",
+            "Epic": "bg-purple-100 text-purple-700 border-purple-300",
+            "Legendary": "bg-yellow-100 text-yellow-700 border-yellow-400"
+        };
+
+        // Word Dictionary (for display & logic)
+        const DICT = {
+            places: {
+                desk: { en: "desk", ja: "机" },
+                chair: { en: "chair", ja: "いす" },
+                bed: { en: "bed", ja: "ベッド" },
+                basket: { en: "basket", ja: "かご" },
+                wall: { en: "wall", ja: "壁(かべ)" },
+                sofa: { en: "sofa", ja: "ソファ" },
+                table: { en: "table", ja: "テーブル" },
+                tree: { en: "tree", ja: "木" },
+                bench: { en: "bench", ja: "ベンチ" }
+            },
+            items: {
+                apple: { en: "apple", ja: "りんご", prefix: "an" },
+                bag: { en: "bag", ja: "かばん", prefix: "a" },
+                clock: { en: "clock", ja: "時計", prefix: "a" },
+                book: { en: "book", ja: "本", prefix: "a" },
+                ball: { en: "ball", ja: "ボール", prefix: "a" },
+                cup: { en: "cup", ja: "カップ", prefix: "a" }
+            },
+            preps: {
+                on: { en: "on", ja: "～の上" },
+                in: { en: "in", ja: "～の中" },
+                under: { en: "under", ja: "～の下" },
+                by: { en: "by", ja: "～のそば" }
+            }
+        };
+
+        // Allowed combinations logic per room type
+        const ROOM_TYPES = [
+            {
+                name: "Bedroom",
+                color: "#dbeafe", // blue-100
+                items: ["apple", "bag", "clock", "book", "ball", "cup"],
+                rules: [
+                    { place: "desk", preps: ["on", "under", "by"] },
+                    { place: "chair", preps: ["on", "under", "by"] },
+                    { place: "bed", preps: ["on", "under", "by"] },
+                    { place: "basket", preps: ["in", "by"] },
+                    { place: "wall", preps: ["on"] }
+                ]
+            },
+            {
+                name: "Living Room",
+                color: "#ffedd5", // orange-100
+                items: ["apple", "bag", "clock", "book", "ball", "cup"],
+                rules: [
+                    { place: "sofa", preps: ["on", "under", "by"] },
+                    { place: "table", preps: ["on", "under", "by"] },
+                    { place: "basket", preps: ["in", "by"] },
+                    { place: "wall", preps: ["on"] }
+                ]
+            },
+            {
+                name: "Park",
+                color: "#dcfce7", // green-100
+                items: ["apple", "bag", "book", "ball"],
+                rules: [
+                    { place: "bench", preps: ["on", "under", "by"] },
+                    { place: "tree", preps: ["under", "by"] },
+                    { place: "basket", preps: ["in", "by"] }
+                ]
+            }
+        ];
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.5);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'coin') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(1760, audioCtx.currentTime + 0.05);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'gacha') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.6);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.6);
+            }
+        }
+
+        class Scene3D {
+            constructor() {
+                this.container = document.getElementById('canvas-container');
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color('#dbeafe'); 
+                this.scene.fog = new THREE.Fog('#dbeafe', 10, 30);
+                
+                // Camera setup for first person view
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+                this.camera.position.set(0, 3, 5); // Start position
+                
+                // View control state
+                this.yaw = 0;
+                this.pitch = 0;
+
+                // Renderer setup
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                this.container.appendChild(this.renderer.domElement);
+
+                // Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                this.scene.add(ambientLight);
+
+                this.dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                this.dirLight.position.set(5, 10, 5);
+                this.dirLight.castShadow = true;
+                this.dirLight.shadow.mapSize.width = 1024;
+                this.dirLight.shadow.mapSize.height = 1024;
+                this.dirLight.shadow.camera.near = 0.5;
+                this.dirLight.shadow.camera.far = 25;
+                this.scene.add(this.dirLight);
+
+                // Common Materials
+                this.mats = {
+                    wood: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
+                    lightWood: new THREE.MeshLambertMaterial({ color: 0xdeb887 }),
+                    fabricBlue: new THREE.MeshLambertMaterial({ color: 0x93c5fd }),
+                    fabricRed: new THREE.MeshLambertMaterial({ color: 0xfca5a5 }),
+                    basket: new THREE.MeshLambertMaterial({ color: 0xcd853f }),
+                    wall: new THREE.MeshLambertMaterial({ color: 0xfdf6e3 }),
+                    floorWood: new THREE.MeshLambertMaterial({ color: 0xd2b48c }),
+                    grass: new THREE.MeshLambertMaterial({ color: 0x86efac }),
+                    leaves: new THREE.MeshLambertMaterial({ color: 0x4ade80 }),
+                    trunk: new THREE.MeshLambertMaterial({ color: 0x78350f })
+                };
+
+                // Group for the environment to easily swap rooms
+                this.envGroup = new THREE.Group();
+                this.scene.add(this.envGroup);
+
+                // Group for the target item
+                this.targetGroup = new THREE.Group();
+                this.scene.add(this.targetGroup);
+                
+                this.currentItemMesh = null;
+                this.anchors = {};
+                this.currentRoomType = null;
+
+                // Movement controls
+                this.moveState = { forward: false, backward: false, left: false, right: false };
+                this.velocity = new THREE.Vector3();
+                this.direction = new THREE.Vector3();
+                this.speed = 8.0; // Movement speed
+                this.prevTime = performance.now();
+                
+                // Joystick Data
+                this.joystickVector = { x: 0, y: 0 };
+
+                this.setupControls();
+                this.setupJoystick();
+
+                // Handle resize
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+
+                // Animate loop bound to this instance
+                this.animate = this.animate.bind(this);
+                // We don't call this.animate() here directly anymore. App will call it when ready.
+                
+                // Hide hint after a few seconds
+                setTimeout(() => {
+                    const hint = document.getElementById('controls-hint');
+                    if(hint) hint.style.opacity = '0';
+                }, 4000);
+            }
+            
+            setupControls() {
+                // Keyboard
+                document.addEventListener('keydown', (event) => {
+                    switch (event.code) {
+                        case 'ArrowUp':
+                        case 'KeyW': this.moveState.forward = true; break;
+                        case 'ArrowLeft':
+                        case 'KeyA': this.moveState.left = true; break;
+                        case 'ArrowDown':
+                        case 'KeyS': this.moveState.backward = true; break;
+                        case 'ArrowRight':
+                        case 'KeyD': this.moveState.right = true; break;
+                    }
+                });
+
+                document.addEventListener('keyup', (event) => {
+                    switch (event.code) {
+                        case 'ArrowUp':
+                        case 'KeyW': this.moveState.forward = false; break;
+                        case 'ArrowLeft':
+                        case 'KeyA': this.moveState.left = false; break;
+                        case 'ArrowDown':
+                        case 'KeyS': this.moveState.backward = false; break;
+                        case 'ArrowRight':
+                        case 'KeyD': this.moveState.right = false; break;
+                    }
+                });
+                
+                // Mouse / Touch Look
+                let isDragging = false;
+                let previousMousePosition = { x: 0, y: 0 };
+                
+                const onPointerDown = (e) => {
+                    // Don't trigger look if interacting with UI or joystick
+                    if (e.target.closest('#ui-layer') || e.target.closest('#joystick-zone')) return;
+                    isDragging = true;
+                    previousMousePosition = { x: e.clientX || e.touches?.[0].clientX, y: e.clientY || e.touches?.[0].clientY };
+                };
+                
+                const onPointerMove = (e) => {
+                    if (!isDragging) return;
+                    
+                    const clientX = e.clientX || (e.touches && e.touches.length > 0 ? e.touches[0].clientX : previousMousePosition.x);
+                    const clientY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : previousMousePosition.y);
+                    
+                    const deltaMove = {
+                        x: clientX - previousMousePosition.x,
+                        y: clientY - previousMousePosition.y
+                    };
+                    
+                    const sensitivity = 0.005;
+                    this.yaw -= deltaMove.x * sensitivity;
+                    this.pitch -= deltaMove.y * sensitivity;
+                    
+                    // Clamp pitch
+                    this.pitch = Math.max(-Math.PI/2.5, Math.min(Math.PI/2.5, this.pitch));
+                    
+                    this.updateCameraRotation();
+                    
+                    previousMousePosition = { x: clientX, y: clientY };
+                };
+                
+                const onPointerUp = () => { isDragging = false; };
+                
+                document.addEventListener('mousedown', onPointerDown);
+                document.addEventListener('mousemove', onPointerMove);
+                document.addEventListener('mouseup', onPointerUp);
+                
+                document.addEventListener('touchstart', onPointerDown, {passive: false});
+                document.addEventListener('touchmove', onPointerMove, {passive: false});
+                document.addEventListener('touchend', onPointerUp);
+            }
+            
+            setupJoystick() {
+                // Only show joystick on touch devices
+                if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                    const zone = document.getElementById('joystick-zone');
+                    const manager = nipplejs.create({
+                        zone: zone,
+                        mode: 'static',
+                        position: { left: '50%', top: '50%' },
+                        color: 'white',
+                        size: 100
+                    });
+                    
+                    manager.on('move', (evt, data) => {
+                        const forward = Math.sin(data.angle.radian);
+                        const right = Math.cos(data.angle.radian);
+                        // Map joystick vector (distance up to 50) to -1 to 1 range
+                        const force = Math.min(data.distance / 50, 1.0);
+                        this.joystickVector.x = right * force;
+                        this.joystickVector.y = forward * force; // y is forward/backward in 2d joy
+                    });
+                    
+                    manager.on('end', () => {
+                        this.joystickVector = { x: 0, y: 0 };
+                    });
+                } else {
+                    document.getElementById('joystick-zone').style.display = 'none';
+                }
+            }
+
+            updateCameraRotation() {
+                const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+                euler.x = this.pitch;
+                euler.y = this.yaw;
+                this.camera.quaternion.setFromEuler(euler);
+            }
+            
+            buildRoom(roomConfig) {
+                // Clear previous environment
+                while(this.envGroup.children.length > 0){ 
+                    this.envGroup.remove(this.envGroup.children[0]); 
+                }
+                this.anchors = {};
+                this.currentRoomType = roomConfig;
+                
+                this.scene.background.set(roomConfig.color);
+                this.scene.fog.color.set(roomConfig.color);
+
+                // Floor
+                const floorGeo = new THREE.PlaneGeometry(30, 30);
+                const floorMat = roomConfig.name === "Park" ? this.mats.grass : this.mats.floorWood;
+                const floor = new THREE.Mesh(floorGeo, floorMat);
+                floor.rotation.x = -Math.PI / 2;
+                floor.receiveShadow = true;
+                this.envGroup.add(floor);
+
+                if (roomConfig.name !== "Park") {
+                    // Walls
+                    const wallGeo = new THREE.PlaneGeometry(30, 10);
+                    
+                    const backWall = new THREE.Mesh(wallGeo, this.mats.wall);
+                    backWall.position.set(0, 5, -10);
+                    backWall.receiveShadow = true;
+                    this.envGroup.add(backWall);
+                    
+                    const leftWall = new THREE.Mesh(wallGeo, this.mats.wall);
+                    leftWall.position.set(-10, 5, 0);
+                    leftWall.rotation.y = Math.PI / 2;
+                    leftWall.receiveShadow = true;
+                    this.envGroup.add(leftWall);
+                    
+                    const rightWall = new THREE.Mesh(wallGeo, this.mats.wall);
+                    rightWall.position.set(10, 5, 0);
+                    rightWall.rotation.y = -Math.PI / 2;
+                    rightWall.receiveShadow = true;
+                    this.envGroup.add(rightWall);
+                }
+
+                // Build specific furniture based on room type
+                if (roomConfig.name === "Bedroom") {
+                    this.buildBedroomFurniture();
+                } else if (roomConfig.name === "Living Room") {
+                    this.buildLivingRoomFurniture();
+                } else if (roomConfig.name === "Park") {
+                    this.buildParkEnvironment();
+                }
+                
+                // Add Basket (Common to all for now)
+                this.buildBasket(new THREE.Vector3(-4, 0, 2));
+            }
+            
+            buildBedroomFurniture() {
+                // Desk (Right side)
+                const deskGroup = new THREE.Group();
+                const deskTop = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 2.5), this.mats.wood);
+                deskTop.position.set(0, 2.5, 0);
+                deskTop.castShadow = true; deskTop.receiveShadow = true;
+                deskGroup.add(deskTop);
+                
+                const legGeo = new THREE.CylinderGeometry(0.15, 0.15, 2.5);
+                const positions = [[-1.8, -1.0], [1.8, -1.0], [-1.8, 1.0], [1.8, 1.0]];
+                positions.forEach(pos => {
+                    const leg = new THREE.Mesh(legGeo, this.mats.wood);
+                    leg.position.set(pos[0], 1.25, pos[1]);
+                    leg.castShadow = true;
+                    deskGroup.add(leg);
+                });
+                deskGroup.position.set(5, 0, -5);
+                this.envGroup.add(deskGroup);
+                this.anchors.desk = { center: new THREE.Vector3(5, 0, -5), size: {w:4, h:2.6, d:2.5} };
+
+                // Chair (In front of desk)
+                const chairGroup = new THREE.Group();
+                const seat = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.15, 1.5), this.mats.lightWood);
+                seat.position.set(0, 1.3, 0);
+                seat.castShadow = true; seat.receiveShadow = true;
+                chairGroup.add(seat);
+                
+                const backrest = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, 0.15), this.mats.lightWood);
+                backrest.position.set(0, 2.05, -0.65);
+                backrest.castShadow = true;
+                chairGroup.add(backrest);
+                
+                const clegGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.3);
+                const cpositions = [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]];
+                cpositions.forEach(pos => {
+                    const leg = new THREE.Mesh(clegGeo, this.mats.lightWood);
+                    leg.position.set(pos[0], 0.65, pos[1]);
+                    leg.castShadow = true;
+                    chairGroup.add(leg);
+                });
+                chairGroup.position.set(5, 0, -2);
+                this.envGroup.add(chairGroup);
+                this.anchors.chair = { center: new THREE.Vector3(5, 0, -2), size: {w:1.5, h:1.45, d:1.5} };
+
+                // Bed (Left side)
+                const bedGroup = new THREE.Group();
+                const bedBase = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 6), this.mats.wood);
+                bedBase.position.set(0, 0.5, 0);
+                bedBase.castShadow = true; bedBase.receiveShadow = true;
+                bedGroup.add(bedBase);
+                
+                const mattress = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.4, 5.8), this.mats.fabricBlue);
+                mattress.position.set(0, 1.2, 0);
+                mattress.castShadow = true;
+                bedGroup.add(mattress);
+                
+                const pillow = new THREE.Mesh(new THREE.BoxGeometry(2, 0.3, 1.2), new THREE.MeshLambertMaterial({color: 0xffffff}));
+                pillow.position.set(0, 1.5, -2);
+                pillow.castShadow = true;
+                bedGroup.add(pillow);
+                
+                bedGroup.position.set(-5, 0, -4);
+                this.envGroup.add(bedGroup);
+                this.anchors.bed = { center: new THREE.Vector3(-5, 0, -4), size: {w:4, h:1.4, d:6} };
+                
+                this.anchors.wall = { center: new THREE.Vector3(0, 6, -9.9), size: {w:1, h:1, d:1} };
+            }
+            
+            buildLivingRoomFurniture() {
+                // Sofa
+                const sofaGroup = new THREE.Group();
+                const seat = new THREE.Mesh(new THREE.BoxGeometry(6, 1, 2.5), this.mats.fabricRed);
+                seat.position.set(0, 1, 0);
+                seat.castShadow = true; seat.receiveShadow = true;
+                sofaGroup.add(seat);
+                
+                const back = new THREE.Mesh(new THREE.BoxGeometry(6, 2, 0.8), this.mats.fabricRed);
+                back.position.set(0, 2.5, -0.85);
+                back.castShadow = true;
+                sofaGroup.add(back);
+                
+                const armL = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.5, 2.5), this.mats.fabricRed);
+                armL.position.set(-3.4, 1.25, 0);
+                armL.castShadow = true;
+                sofaGroup.add(armL);
+                
+                const armR = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.5, 2.5), this.mats.fabricRed);
+                armR.position.set(3.4, 1.25, 0);
+                armR.castShadow = true;
+                sofaGroup.add(armR);
+                
+                sofaGroup.position.set(0, 0, -6);
+                this.envGroup.add(sofaGroup);
+                this.anchors.sofa = { center: new THREE.Vector3(0, 0, -6), size: {w:6, h:1.5, d:2.5} };
+                
+                // Table
+                const tableGroup = new THREE.Group();
+                const top = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 0.2, 32), this.mats.lightWood);
+                top.position.set(0, 1.5, 0);
+                top.castShadow = true; top.receiveShadow = true;
+                tableGroup.add(top);
+                
+                const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 1.5, 16), this.mats.wood);
+                leg.position.set(0, 0.75, 0);
+                leg.castShadow = true;
+                tableGroup.add(leg);
+                
+                tableGroup.position.set(0, 0, -2);
+                this.envGroup.add(tableGroup);
+                this.anchors.table = { center: new THREE.Vector3(0, 0, -2), size: {w:4, h:1.6, d:4} };
+                
+                this.anchors.wall = { center: new THREE.Vector3(-5, 6, -9.9), size: {w:1, h:1, d:1} };
+            }
+            
+            buildParkEnvironment() {
+                // Tree
+                const treeGroup = new THREE.Group();
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 4, 8), this.mats.trunk);
+                trunk.position.set(0, 2, 0);
+                trunk.castShadow = true; trunk.receiveShadow = true;
+                treeGroup.add(trunk);
+                
+                const leaves1 = new THREE.Mesh(new THREE.SphereGeometry(2.5, 8, 8), this.mats.leaves);
+                leaves1.position.set(0, 5, 0);
+                leaves1.castShadow = true;
+                treeGroup.add(leaves1);
+                
+                const leaves2 = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), this.mats.leaves);
+                leaves2.position.set(1.5, 4.5, 1.5);
+                leaves2.castShadow = true;
+                treeGroup.add(leaves2);
+                
+                treeGroup.position.set(-4, 0, -6);
+                this.envGroup.add(treeGroup);
+                this.anchors.tree = { center: new THREE.Vector3(-4, 0, -6), size: {w:4, h:0, d:4} }; // Target base of tree
+                
+                // Bench
+                const benchGroup = new THREE.Group();
+                const seat = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 1.2), this.mats.wood);
+                seat.position.set(0, 1.2, 0);
+                seat.castShadow = true; seat.receiveShadow = true;
+                benchGroup.add(seat);
+                
+                const back = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 0.2), this.mats.wood);
+                back.position.set(0, 1.8, -0.5);
+                back.castShadow = true;
+                benchGroup.add(back);
+                
+                const legGeo = new THREE.BoxGeometry(0.2, 1.2, 1);
+                const legL = new THREE.Mesh(legGeo, new THREE.MeshLambertMaterial({color: 0x333333}));
+                legL.position.set(-1.8, 0.6, 0);
+                legL.castShadow = true;
+                benchGroup.add(legL);
+                
+                const legR = new THREE.Mesh(legGeo, new THREE.MeshLambertMaterial({color: 0x333333}));
+                legR.position.set(1.8, 0.6, 0);
+                legR.castShadow = true;
+                benchGroup.add(legR);
+                
+                benchGroup.position.set(3, 0, -4);
+                this.envGroup.add(benchGroup);
+                this.anchors.bench = { center: new THREE.Vector3(3, 0, -4), size: {w:4, h:1.3, d:1.2} };
+            }
+            
+            buildBasket(position) {
+                const basketGroup = new THREE.Group();
+                const basketGeo = new THREE.CylinderGeometry(0.8, 0.6, 1.2, 16, 1, true);
+                const basket = new THREE.Mesh(basketGeo, this.mats.basket);
+                basket.position.set(0, 0.6, 0);
+                basket.material.side = THREE.DoubleSide; 
+                basket.castShadow = true; basket.receiveShadow = true;
+                
+                const basketBottom = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.1, 16), this.mats.basket);
+                basketBottom.position.set(0, 0.05, 0);
+                
+                basketGroup.add(basket);
+                basketGroup.add(basketBottom);
+                basketGroup.position.copy(position);
+                this.envGroup.add(basketGroup);
+                
+                this.anchors.basket = { center: position.clone(), size: {w:1.6, h:1.2, d:1.6} };
+            }
+
+            // (Removed the older buildRoom method that was overwriting the dynamic one)
+
+            createItem(itemName) {
+                if (this.currentItemMesh) {
+                    this.targetGroup.remove(this.currentItemMesh);
+                }
+
+                let mesh;
+                switch(itemName) {
+                    case 'apple':
+                        mesh = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), new THREE.MeshLambertMaterial({color: 0xff0000}));
+                        mesh.position.y = 0.3;
+                        break;
+                    case 'book':
+                        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.15, 0.8), new THREE.MeshLambertMaterial({color: 0x2563eb}));
+                        mesh.position.y = 0.075;
+                        break;
+                    case 'bag':
+                        mesh = new THREE.Group();
+                        const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.8, 0.5), new THREE.MeshLambertMaterial({color: 0x16a34a}));
+                        body.position.y = 0.4;
+                        const handle = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.05, 8, 16, Math.PI), new THREE.MeshLambertMaterial({color: 0x16a34a}));
+                        handle.position.y = 0.8;
+                        mesh.add(body); mesh.add(handle);
+                        break;
+                    case 'clock':
+                        mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 32), new THREE.MeshLambertMaterial({color: 0xfacc15}));
+                        mesh.rotation.x = Math.PI/2;
+                        mesh.position.y = 0.5;
+                        break;
+                    case 'ball':
+                        mesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), new THREE.MeshLambertMaterial({color: 0xf97316})); // orange
+                        mesh.position.y = 0.4;
+                        break;
+                    case 'cup':
+                        mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 0.5, 16), new THREE.MeshLambertMaterial({color: 0xe5e7eb})); // gray
+                        mesh.position.y = 0.25;
+                        break;
+                }
+                
+                const box = new THREE.Box3().setFromObject(mesh);
+                mesh.userData.height = box.max.y - box.min.y;
+                
+                // Add a gentle floating animation wrapper
+                const floatGroup = new THREE.Group();
+                floatGroup.add(mesh);
+                
+                mesh.castShadow = true;
+                this.currentItemMesh = floatGroup;
+                this.targetGroup.add(floatGroup);
+            }
+
+            placeItem(itemName, prep, placeName) {
+                this.createItem(itemName);
+                const anchor = this.anchors[placeName];
+                
+                // If anchor doesn't exist in this room, something went wrong, but fallback
+                if(!anchor) {
+                    console.warn(`Anchor ${placeName} not found in this room.`);
+                    return;
+                }
+                
+                const h = this.currentItemMesh.children[0].userData.height;
+
+                let x = anchor.center.x;
+                let y = anchor.center.y;
+                let z = anchor.center.z;
+
+                if (prep === 'on') {
+                    y = anchor.size.h; // Place on top
+                    if(placeName === 'wall') {
+                        y = anchor.center.y;
+                        z = anchor.center.z + 0.1; // slightly off wall
+                    }
+                } else if (prep === 'under') {
+                    y = 0; // Floor level
+                } else if (prep === 'by') {
+                    y = 0; // Floor level
+                    // Place it somewhere around the object
+                    x = anchor.center.x + (anchor.size.w/2 + 0.8) * (Math.random()>0.5?1:-1); 
+                    z = anchor.center.z + (Math.random()-0.5);
+                } else if (prep === 'in') {
+                    y = 0.2; // inside basket bottom
+                }
+
+                this.targetGroup.position.set(x, y, z);
+                
+                // Reset rotation
+                this.targetGroup.rotation.set(0,0,0);
+                
+                // Special rotation for wall items
+                if(placeName === 'wall' && (itemName === 'clock' || itemName === 'book')) {
+                    this.targetGroup.rotation.y = 0; 
+                }
+                
+                // Little pop animation
+                this.targetGroup.scale.set(0.1, 0.1, 0.1);
+                let t = 0;
+                const popAnim = () => {
+                    t += 0.1;
+                    if(t <= 1) {
+                        const s = 1 + Math.sin(t * Math.PI) * 0.2;
+                        this.targetGroup.scale.set(s, s, s);
+                        requestAnimationFrame(popAnim);
+                    } else {
+                        this.targetGroup.scale.set(1, 1, 1);
+                    }
+                };
+                popAnim();
+                
+                // Reset camera to reasonable position to see the room
+                this.camera.position.set(0, 3, 6);
+                this.yaw = 0;
+                this.pitch = -0.2;
+                this.updateCameraRotation();
+            }
+            
+            animate() {
+                requestAnimationFrame(this.animate);
+                
+                const time = performance.now();
+                const delta = ( time - this.prevTime ) / 1000;
+                
+                // Handle Movement
+                this.velocity.x -= this.velocity.x * 10.0 * delta;
+                this.velocity.z -= this.velocity.z * 10.0 * delta;
+
+                // Keyboard input
+                this.direction.z = Number( this.moveState.forward ) - Number( this.moveState.backward );
+                this.direction.x = Number( this.moveState.right ) - Number( this.moveState.left );
+                this.direction.normalize(); 
+                
+                // Combine with Joystick input
+                let moveX = this.direction.x;
+                let moveZ = this.direction.z;
+                
+                if (this.joystickVector.x !== 0 || this.joystickVector.y !== 0) {
+                    moveX += this.joystickVector.x;
+                    moveZ += this.joystickVector.y;
+                }
+
+                if ( this.moveState.forward || this.moveState.backward || this.joystickVector.y !== 0) this.velocity.z -= moveZ * 40.0 * delta;
+                if ( this.moveState.left || this.moveState.right || this.joystickVector.x !== 0) this.velocity.x -= moveX * 40.0 * delta;
+
+                // Apply velocity to camera position taking rotation into account
+                const camRot = this.camera.rotation.y;
+                
+                this.camera.position.x += (this.velocity.x * Math.cos(camRot) + this.velocity.z * Math.sin(camRot)) * delta;
+                this.camera.position.z += (this.velocity.z * Math.cos(camRot) - this.velocity.x * Math.sin(camRot)) * delta;
+                
+                // Basic boundaries
+                this.camera.position.x = Math.max(-9.5, Math.min(9.5, this.camera.position.x));
+                this.camera.position.z = Math.max(-9.5, Math.min(9.5, this.camera.position.z));
+                // Keep height constant
+                this.camera.position.y = 3;
+
+                this.prevTime = time;
+                
+                // Gentle floating and spinning for the target item
+                if (this.targetGroup && this.currentItemMesh) {
+                    this.currentItemMesh.position.y = Math.sin(time * 0.003) * 0.2;
+                    this.currentItemMesh.rotation.y += 0.01;
+                }
+                
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        class App {
+            constructor() {
+                this.scene3d = new Scene3D();
+                
+                // State
+                this.coins = parseInt(localStorage.getItem('eq_coins')) || 0;
+                this.collection = JSON.parse(localStorage.getItem('eq_collection')) || [];
+                this.round = 1;
+                this.fails = 0;
+                this.currentQuestion = null; // { mode: 'ask'|'answer', item, prep, place, targetSentence }
+                this.isListening = false;
+                
+                // Speech setup
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (SpeechRecognition) {
+                    this.recognition = new SpeechRecognition();
+                    this.recognition.lang = 'en-US';
+                    this.recognition.interimResults = false;
+                    this.recognition.maxAlternatives = 1;
+                    
+                    this.recognition.onresult = (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        this.handleSpeechResult(transcript);
+                    };
+                    
+                    this.recognition.onstart = () => {
+                        this.isListening = true;
+                        document.getElementById('btn-mic').classList.add('mic-recording');
+                        document.getElementById('transcript-text').innerText = "きいているよ...";
+                        document.getElementById('transcript-text').classList.add('text-red-500');
+                    };
+                    
+                    this.recognition.onend = () => {
+                        this.isListening = false;
+                        document.getElementById('btn-mic').classList.remove('mic-recording');
+                        if (document.getElementById('transcript-text').innerText === "きいているよ...") {
+                             document.getElementById('transcript-text').innerText = "マイクボタンを押してね";
+                             document.getElementById('transcript-text').classList.remove('text-red-500');
+                        }
+                    };
+                    
+                    this.recognition.onerror = (event) => {
+                        console.error("Speech error", event);
+                        this.isListening = false;
+                        document.getElementById('btn-mic').classList.remove('mic-recording');
+                        document.getElementById('transcript-text').innerText = "エラー: もう一度押してね";
+                        
+                        // Fallback logic if mic fails due to permissions etc.
+                        if (event.error === 'not-allowed' || event.error === 'no-speech') {
+                             this.fails++;
+                             this.updateFails();
+                             if(this.fails >= 1) {
+                                 // Fast track to MCQ if mic is denied
+                                 this.fails = 3;
+                                 this.updateFails();
+                             }
+                        }
+                    };
+                } else {
+                    console.warn("Speech Recognition API is not supported in this browser.");
+                    // Don't alert immediately, let the user try and gracefully fail to MCQ
+                }
+
+                this.updateUI();
+                
+                // Ensure the game logic starts after setup
+                setTimeout(() => {
+                    this.generateRound();
+                    this.scene3d.animate();
+                }, 500); // Small delay to ensure rendering context is ready
+            }
+
+            generateRound() {
+                this.fails = 0;
+                document.getElementById('fail-counter').classList.add('hidden');
+                document.querySelectorAll('.fail-dot').forEach(el => el.classList.replace('bg-red-500', 'bg-gray-300'));
+                
+                document.getElementById('voice-area').classList.remove('hidden');
+                document.getElementById('mcq-area').classList.add('hidden');
+                document.getElementById('btn-next').classList.add('hidden');
+                document.getElementById('transcript-text').innerText = "マイクボタンを押して英語を話してね";
+                document.getElementById('transcript-text').classList.remove('text-red-500', 'text-green-600');
+                
+                document.getElementById('round-indicator').innerText = `Round ${this.round}`;
+
+                // Pick random room
+                const roomConf = ROOM_TYPES[Math.floor(Math.random() * ROOM_TYPES.length)];
+                this.scene3d.buildRoom(roomConf);
+                document.getElementById('room-name').innerText = roomConf.name;
+
+                // Pick random valid combination for THIS room
+                const item = roomConf.items[Math.floor(Math.random() * roomConf.items.length)];
+                
+                const rule = roomConf.rules[Math.floor(Math.random() * roomConf.rules.length)];
+                const place = rule.place;
+                const prep = rule.preps[Math.floor(Math.random() * rule.preps.length)];
+
+                // Determine mode: 0 = answer (Where is it?), 1 = ask (Ask where it is)
+                const mode = Math.random() > 0.5 ? 'answer' : 'ask';
+                
+                this.currentQuestion = { item, prep, place, mode, roomConf };
+                
+                // Generate Target Sentence
+                let targetEn, instructionJa, hintText;
+                
+                const itemName = DICT.items[item].en;
+                const placeName = DICT.places[place].en;
+                
+                if (mode === 'answer') {
+                    // Answer Pattern: "It's on the desk."
+                    targetEn = `It's ${prep} the ${placeName}.`;
+                    instructionJa = `「${DICT.items[item].ja}」はどこにある？`;
+                    hintText = "ヒント: It's ...";
+                } else {
+                    // Ask Pattern: "Where is the apple?"
+                    targetEn = `Where is the ${itemName}?`;
+                    instructionJa = `「${DICT.items[item].ja}」の場所を英語で聞こう！`;
+                    hintText = "ヒント: Where ...";
+                }
+                
+                this.currentQuestion.targetSentence = targetEn;
+                
+                // Update UI
+                document.getElementById('instruction-text').innerText = instructionJa;
+                document.getElementById('target-hint').innerText = hintText;
+
+                // Update 3D
+                this.scene3d.placeItem(item, prep, place);
+                
+                console.log("Target:", targetEn); // Debug
+            }
+
+            toggleListening() {
+                if(!this.recognition) return;
+                if(this.isListening) {
+                    this.recognition.stop();
+                } else {
+                    this.recognition.start();
+                }
+            }
+
+            handleSpeechResult(transcript) {
+                document.getElementById('transcript-text').innerText = `「${transcript}」`;
+                
+                const isCorrect = this.checkAnswer(transcript, this.currentQuestion.targetSentence);
+                
+                if (isCorrect) {
+                    document.getElementById('transcript-text').classList.add('text-green-600');
+                    document.getElementById('transcript-text').classList.remove('text-red-500');
+                    this.handleSuccess();
+                } else {
+                    document.getElementById('transcript-text').classList.add('text-red-500');
+                    this.handleFail();
+                }
+            }
+
+            checkAnswer(spoken, target) {
+                // Normalize strings: lowercase, remove punctuation
+                const normalize = (str) => {
+                    return str.toLowerCase().replace(/[.,!?]/g, '').trim();
+                };
+                
+                const s = normalize(spoken);
+                const t = normalize(target);
+                
+                if (s === t) return true;
+                
+                // Handle common contractions and variations for kids
+                const sExpanded = s.replace("where's", "where is").replace("it's", "it is");
+                const tExpanded = t.replace("where's", "where is").replace("it's", "it is");
+                
+                if (sExpanded === tExpanded) return true;
+                
+                // Sometimes speech recog misses "the". Be slightly lenient for kids.
+                const removeArticles = (str) => str.replace(/\b(the|a|an)\b/g, '').trim().replace(/\s+/g, ' ');
+                if(removeArticles(sExpanded) === removeArticles(tExpanded)) return true;
+
+                return false;
+            }
+
+            handleSuccess() {
+                playSound('correct');
+                this.showFeedback("Excellent!");
+                this.addCoin();
+                
+                document.getElementById('voice-area').classList.add('hidden');
+                document.getElementById('mcq-area').classList.add('hidden');
+                document.getElementById('btn-next').classList.remove('hidden');
+            }
+
+            handleFail() {
+                playSound('wrong');
+                this.fails++;
+                this.updateFails();
+                
+                if (this.fails >= 3) {
+                    this.switchToMCQ();
+                } else {
+                    this.showFeedback("Try again!", true);
+                }
+            }
+
+            updateFails() {
+                const counter = document.getElementById('fail-counter');
+                counter.classList.remove('hidden');
+                const dots = counter.querySelectorAll('.fail-dot');
+                for(let i=0; i<3; i++) {
+                    if(i < this.fails) {
+                        dots[i].classList.replace('bg-gray-300', 'bg-red-500');
+                    }
+                }
+            }
+
+            switchToMCQ() {
+                document.getElementById('voice-area').classList.add('hidden');
+                const mcqArea = document.getElementById('mcq-area');
+                mcqArea.classList.remove('hidden');
+                mcqArea.innerHTML = '';
+                
+                document.getElementById('instruction-text').innerText = "正しい英語をえらぼう！";
+                document.getElementById('target-hint').innerText = "";
+
+                // Generate options
+                const correctAns = this.currentQuestion.targetSentence;
+                let options = [correctAns];
+                
+                const currentRules = this.currentQuestion.roomConf.rules;
+                
+                while(options.length < 4) {
+                    let wrongOpt = "";
+                    if(this.currentQuestion.mode === 'answer') {
+                        // Mix preps and places from current room
+                        const rRule = currentRules[Math.floor(Math.random() * currentRules.length)];
+                        const rPlace = rRule.place;
+                        const rPrep = rRule.preps[Math.floor(Math.random() * rRule.preps.length)];
+                        wrongOpt = `It's ${rPrep} the ${DICT.places[rPlace].en}.`;
+                    } else {
+                        // Mix items from current room
+                        const itemsList = this.currentQuestion.roomConf.items;
+                        const rItem = itemsList[Math.floor(Math.random() * itemsList.length)];
+                        wrongOpt = `Where is the ${DICT.items[rItem].en}?`;
+                    }
+                    
+                    if(!options.includes(wrongOpt)) {
+                        options.push(wrongOpt);
+                    }
+                }
+                
+                // Shuffle options
+                options.sort(() => Math.random() - 0.5);
+                
+                // Create buttons
+                options.forEach(opt => {
+                    const btn = document.createElement('button');
+                    btn.className = "bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 text-blue-800 font-bold py-2 px-3 rounded-lg shadow transition-colors text-sm md:text-base";
+                    btn.innerText = opt;
+                    btn.onclick = () => {
+                        if(opt === correctAns) {
+                            btn.classList.replace('bg-blue-50', 'bg-green-400');
+                            btn.classList.replace('text-blue-800', 'text-white');
+                            this.handleSuccess();
+                        } else {
+                            playSound('wrong');
+                            btn.classList.replace('bg-blue-50', 'bg-red-300');
+                            btn.classList.replace('border-blue-200', 'border-red-400');
+                            btn.classList.add('opacity-50');
+                            btn.disabled = true;
+                        }
+                    };
+                    mcqArea.appendChild(btn);
+                });
+            }
+
+            showFeedback(text, isMinor = false) {
+                const fb = document.getElementById('feedback-message');
+                const fbText = document.getElementById('feedback-text');
+                fbText.innerText = text;
+                fbText.className = `text-6xl md:text-8xl font-black text-center pop-in drop-shadow-2xl ${isMinor ? 'text-red-500' : 'text-yellow-400'}`;
+                
+                fb.classList.remove('hidden');
+                
+                // Reset animation
+                fbText.style.animation = 'none';
+                fbText.offsetHeight; /* trigger reflow */
+                fbText.style.animation = null; 
+
+                setTimeout(() => {
+                    fb.classList.add('hidden');
+                }, 1500);
+            }
+
+            addCoin() {
+                this.coins++;
+                localStorage.setItem('eq_coins', this.coins);
+                this.updateUI();
+                setTimeout(() => playSound('coin'), 500);
+                
+                // Coin animation effect on UI
+                const coinEl = document.getElementById('coin-count');
+                coinEl.classList.add('scale-150', 'text-yellow-400');
+                setTimeout(() => coinEl.classList.remove('scale-150', 'text-yellow-400'), 300);
+            }
+
+            updateUI() {
+                document.getElementById('coin-count').innerText = this.coins;
+                
+                const gachaBtn = document.getElementById('btn-gacha');
+                if (this.coins >= 5) {
+                    gachaBtn.classList.remove('hidden', 'opacity-50', 'cursor-not-allowed');
+                    gachaBtn.classList.add('animate-bounce');
+                } else {
+                    gachaBtn.classList.remove('animate-bounce');
+                    gachaBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    if(this.coins < 5 && this.collection.length === 0) gachaBtn.classList.add('hidden');
+                    else gachaBtn.classList.remove('hidden');
+                }
+            }
+
+            nextRound() {
+                this.round++;
+                this.generateRound();
+            }
+
+            openGacha() {
+                if (this.coins < 5) return;
+                document.getElementById('modal-gacha').classList.remove('hidden');
+                document.getElementById('gacha-result').classList.add('hidden');
+                document.getElementById('btn-do-gacha').classList.remove('hidden');
+                
+                // check if enough coins for button state inside modal
+                if(this.coins < 5) {
+                     document.getElementById('btn-do-gacha').classList.add('opacity-50');
+                     document.getElementById('btn-do-gacha').disabled = true;
+                } else {
+                     document.getElementById('btn-do-gacha').classList.remove('opacity-50');
+                     document.getElementById('btn-do-gacha').disabled = false;
+                }
+            }
+
+            closeGacha() {
+                document.getElementById('modal-gacha').classList.add('hidden');
+                document.getElementById('gacha-animation').classList.add('hidden');
+            }
+
+            playGacha() {
+                if (this.coins < 5) return;
+                this.coins -= 5;
+                localStorage.setItem('eq_coins', this.coins);
+                this.updateUI();
+
+                playSound('gacha');
+                
+                const btn = document.getElementById('btn-do-gacha');
+                const anim = document.getElementById('gacha-animation');
+                const res = document.getElementById('gacha-result');
+                
+                btn.classList.add('hidden');
+                anim.classList.remove('hidden');
+                anim.classList.add('gacha-spin');
+                res.classList.add('hidden');
+
+                // Determine logic for rarity
+                const rand = Math.random();
+                let rarityFilter = "Common";
+                if (rand > 0.95) rarityFilter = "Legendary";
+                else if (rand > 0.8) rarityFilter = "Epic";
+                else if (rand > 0.5) rarityFilter = "Rare";
+
+                const pool = CHARACTERS.filter(c => c.rarity === rarityFilter);
+                const char = pool[Math.floor(Math.random() * pool.length)];
+
+                setTimeout(() => {
+                    anim.classList.remove('gacha-spin');
+                    anim.classList.add('hidden');
+                    
+                    document.getElementById('gacha-emoji').innerText = char.emoji;
+                    document.getElementById('gacha-name').innerText = char.name;
+                    
+                    const rBadge = document.getElementById('gacha-rarity');
+                    rBadge.innerText = char.rarity;
+                    rBadge.className = `inline-block px-3 py-1 rounded-full text-sm font-bold mb-2 border ${RARITY_COLORS[char.rarity]}`;
+                    
+                    res.classList.remove('hidden');
+                    
+                    // Add to collection
+                    if(!this.collection.includes(char.id)) {
+                        this.collection.push(char.id);
+                        localStorage.setItem('eq_collection', JSON.stringify(this.collection));
+                    }
+
+                    setTimeout(() => {
+                        if(this.coins >= 5) {
+                            btn.classList.remove('hidden');
+                            btn.innerText = "もう1回回す！ (5🪙)";
+                        } else {
+                            // Show close or disable button
+                            btn.classList.remove('hidden');
+                            btn.classList.add('opacity-50');
+                            btn.disabled = true;
+                        }
+                    }, 1000);
+
+                }, 1500);
+            }
+
+            openCollection() {
+                document.getElementById('modal-collection').classList.remove('hidden');
+                document.getElementById('collection-count').innerText = this.collection.length;
+                
+                const grid = document.getElementById('collection-grid');
+                grid.innerHTML = '';
+                
+                CHARACTERS.forEach(char => {
+                    const isCollected = this.collection.includes(char.id);
+                    
+                    const card = document.createElement('div');
+                    card.className = `flex flex-col items-center justify-center p-3 rounded-xl border-2 ${isCollected ? RARITY_COLORS[char.rarity] : 'bg-gray-50 border-dashed border-gray-200'}`;
+                    
+                    if (isCollected) {
+                        card.innerHTML = `
+                            <div class="text-4xl mb-1">${char.emoji}</div>
+                            <div class="text-xs font-bold text-center line-clamp-1">${char.name}</div>
+                        `;
+                    } else {
+                        card.innerHTML = `
+                            <div class="text-4xl mb-1 opacity-20 filter grayscale">❓</div>
+                            <div class="text-xs font-bold text-center text-gray-400">???</div>
+                        `;
+                    }
+                    grid.appendChild(card);
+                });
+            }
+
+            closeCollection() {
+                document.getElementById('modal-collection').classList.add('hidden');
+            }
+        }
+
+        // Initialize App on Load
+        window.onload = () => {
+            window.app = new App();
+        };
+
+    </script>
+</body>
+</html>
